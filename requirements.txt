@@ -1,0 +1,7 @@
+circuitpython-stubs
+adafruit-circuitpython-htu31d
+adafruit-circuitpython-sgp30
+adafruit-circuitpython-tsl2591
+adafruit-circuitpython-bmp3xx
+adafruit-circuitpython-displayio-ssd1306
+adafruit-circuitpython-display-text
