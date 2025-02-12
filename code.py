@@ -9,6 +9,8 @@ import board
 import busio
 import digitalio
 import displayio
+import microcontroller
+import supervisor
 import terminalio
 from adafruit_display_text import label
 
@@ -17,14 +19,15 @@ displayio.release_displays()
 I2C0 = busio.I2C(scl=board.GP5, sda=board.GP4)
 I2C1 = busio.I2C(scl=board.GP27, sda=board.GP26)
 
-# Initialize devices
-led = digitalio.DigitalInOut(board.LED)
-led.direction = digitalio.Direction.OUTPUT
+# Devices
+onboardLed = digitalio.DigitalInOut(board.LED)
+onboardLed.direction = digitalio.Direction.OUTPUT
 
 button = digitalio.DigitalInOut(board.GP17)
 button.direction = digitalio.Direction.INPUT
 button.pull = digitalio.Pull.UP
 
+# Sensors
 TSL2591 = adafruit_tsl2591.TSL2591(I2C0, address=0x29)
 SGP30 = adafruit_sgp30.Adafruit_SGP30(I2C0, address=0x58)
 HTU31D = adafruit_htu31d.HTU31D(I2C0, address=0x40)
@@ -35,33 +38,37 @@ DISPLAY_WIDTH = 128
 DISPLAY_HEIGHT = 64
 display_bus = displayio.I2CDisplay(I2C1, device_address=0x3D)
 display = adafruit_displayio_ssd1306.SSD1306(display_bus, rotation=0, width=DISPLAY_WIDTH, height=DISPLAY_HEIGHT)
-# display = adafruit_displayio_ssd1306.SSD1306(display_bus, rotation=90, width=DISPLAY_HEIGHT, height=DISPLAY_WIDTH)
 
-# Create a display group
+# Pages
 page1 = displayio.Group()
 page2 = displayio.Group()
 page3 = displayio.Group()
-current_page = 1
-pages = [page1, page2, page3]
+statsPage = displayio.Group()
+current_page = 0
+pages = [page1, page2, page3, statsPage]
 display.root_group = pages[current_page]  # default page
 
-eCO2_levels = {
+eCO2_ranks = {
     30000: "EVAC",
     1600: "CRIT",
     1400: "BAD",
     1200: "VENT",
     1000: "HIGH",
-    800: "fair"
+    800: "fair",
+    400: "norm"
 }
-tvoc_ppm_levels = {
-    5.5: "EVAC",
-    2.2: "CRIT",
-    1.43: "BAD",
-    0.66: "VENT",
-    0.43: "HIGH",
-    0.22: "fair"
-}
-tvoc_ppb_levels = {
+
+
+def get_eCO2_rank(eCO2_val):
+    for threshold, text in sorted(eCO2_ranks.items(), reverse=True):
+        if eCO2_val <= 400:
+            return "low"
+        if eCO2_val >= threshold:
+            return text
+    return "n/a"
+
+
+tvoc_ppb_ranks = {
     5500: "EVAC",
     2200: "CRIT",
     1430: "BAD",
@@ -71,79 +78,131 @@ tvoc_ppb_levels = {
 }
 
 
-def get_eCO2_text(eCO2_val):
-    for threshold, text in sorted(eCO2_levels.items(), reverse=True):
-        if eCO2_val == 400:
+def get_tvoc_rank(tvoc_val):
+    for threshold, text in sorted(tvoc_ppb_ranks.items(), reverse=True):
+        if tvoc_val <= 220:
             return "low"
-        if eCO2_val >= threshold:
-            return f"{eCO2_val}ppm ({text})"
-    return f"{eCO2_val}ppm"
+        elif tvoc_val >= threshold:
+            return text
+    return "n/a"
 
 
-def get_tvoc_text(tvoc_val):
-    for threshold, text in sorted(tvoc_ppm_levels.items(), reverse=True):
-        if tvoc_val >= threshold:
-            return f"{tvoc_val}ppm ({text})"
-    return f"{tvoc_val}ppm"
+temperature_ranks = {
+    30: "hot",
+    25: "warm",
+    22: "norm",
+    20: "cool",
+    19: "cold",
+    0: "HEAT"
+}
 
 
-"""
-    Page 1
-"""
-# Create LEFT aligned labels
-p1_title_label = label.Label(font=terminalio.FONT, text="Hello!", color=0xFFFFFF, x=0, y=5)
-p1_temperature_label = label.Label(font=terminalio.FONT, text="[Temp]", color=0xFFFFFF, x=0, y=15 + 3)
-p1_humidity_label = label.Label(font=terminalio.FONT, text="[Humidity]", color=0xFFFFFF, x=0, y=25 + 3)
-p1_lux_label = label.Label(font=terminalio.FONT, text="[Light]", color=0xFFFFFF, x=0, y=35 + 3)
-p1_tvoc_ppm_label = label.Label(font=terminalio.FONT, text="[TVOC]", color=0xFFFFFF, x=0, y=45 + 3)
-p1_eCO2_label = label.Label(font=terminalio.FONT, text="[eCO2]", color=0xFFFFFF, x=0, y=55 + 3)
+def get_temperature_rank(temperature):
+    for threshold, text in sorted(temperature_ranks.items(), reverse=True):
+        if temperature <= 0:
+            return "freezing"
+        if temperature >= threshold:
+            return text
+    return "n/a"
 
-p1_left_labels = [
-    p1_title_label,
-    p1_humidity_label,
-    p1_temperature_label,
-    p1_lux_label,
-    p1_tvoc_ppm_label,
-    p1_eCO2_label
-]
 
-# Create RIGHT aligned labels
-p1_subtitle_label = label.Label(font=terminalio.FONT, text="<3", color=0xFFFFFF, x=0, y=5)
-p1_pressure_label = label.Label(font=terminalio.FONT, text="[Pressure]", color=0xFFFFFF, x=0, y=15 + 3)
+humidity_ranks = {
+    90: "wet",
+    80: "moist",
+    60: "humid",
+    40: "norm",
+    20: "dry",
+    0: "DESERT"
+}
 
-p1_right_labels = [
-    p1_subtitle_label,
-    p1_pressure_label
-]
 
-for l in p1_right_labels:
-    l.x = DISPLAY_WIDTH - l.bounding_box[2]
+def get_humidity_rank(humidity):
+    for threshold, text in sorted(humidity_ranks.items(), reverse=True):
+        if humidity <= 0:
+            return "dry"
+        if humidity >= threshold:
+            return text
+    return "n/a"
 
-# Append labels to the display group
-for label in p1_left_labels + p1_right_labels:
-    page1.append(label)
 
-"""
-    Page 2
-"""
-p2_title_label = label.Label(font=terminalio.FONT, text="Hello!", color=0xFFFFFF, x=0, y=5)
-p2_temperature1_label = label.Label(font=terminalio.FONT, text="[Temp1]", color=0xFFFFFF, x=0, y=15 + 3)
-p2_temperature2_label = label.Label(font=terminalio.FONT, text="[Temp2]", color=0xFFFFFF, x=0, y=25 + 3)
-p2_humidity_label = label.Label(font=terminalio.FONT, text="[Humidity]", color=0xFFFFFF, x=0, y=35 + 3)
+# Page 1
+p1_title = label.Label(font=terminalio.FONT, text="Hello!", color=0xFFFFFF, x=0, y=4)
+p1_temperature = label.Label(font=terminalio.FONT, text="{temp}", color=0xFFFFFF, x=0, y=14)
+p1_humidity = label.Label(font=terminalio.FONT, text="{humidity}", color=0xFFFFFF, x=0, y=24 + 1)
+p1_pressure_label = label.Label(font=terminalio.FONT, text="{pressure}", color=0xFFFFFF, x=0, y=34 + 2)
+p1_TVOC_ppm = label.Label(font=terminalio.FONT, text="{TVOC}", color=0xFFFFFF, x=0, y=44 + 3)
+p1_eCO2 = label.Label(font=terminalio.FONT, text="{eCO2}", color=0xFFFFFF, x=0, y=54 + 5)
 
-p2_left_labels = [
-    p2_title_label,
-    p2_temperature1_label,
-    p2_temperature2_label,
-    p2_humidity_label
-]
+p1_left_labels = [p1_title, p1_temperature, p1_humidity, p1_pressure_label, p1_TVOC_ppm, p1_eCO2]
 
-for label in p2_left_labels:
-    page2.append(label)
+p1_subtitle = label.Label(font=terminalio.FONT, text="<3", color=0xFFFFFF, x=0, y=4)
+p1_temperature_rank = label.Label(font=terminalio.FONT, text="{temp_rank}", color=0xFFFFFF, x=0, y=14)
+p1_humidity_rank = label.Label(font=terminalio.FONT, text="{humidity_rank}", color=0xFFFFFF, x=0, y=24)
+p1_lux = label.Label(font=terminalio.FONT, text="{lux}", color=0xFFFFFF, x=0, y=34)
+p1_tvoc_rank = label.Label(font=terminalio.FONT, text="{tvoc_rank}", color=0xFFFFFF, x=0, y=44)
+p1_eCO2_rank = label.Label(font=terminalio.FONT, text="{eco2_rank}", color=0xFFFFFF, x=0, y=54)
 
-time.sleep(3)
+p1_right_labels = [p1_subtitle, p1_lux, p1_temperature_rank, p1_humidity_rank, p1_tvoc_rank, p1_eCO2_rank]
 
-# Main loop
+for lbl in p1_right_labels:
+    lbl.x = DISPLAY_WIDTH - lbl.bounding_box[2]
+
+for lbl in p1_left_labels + p1_right_labels:
+    page1.append(lbl)
+
+# Page 2
+p2_temp_title = label.Label(font=terminalio.FONT, scale=1, text="Temp (C)", color=0xFFFFFF, x=0, y=4)
+p2_temperature = label.Label(font=terminalio.FONT, scale=2, text="{temp}", color=0xFFFFFF, x=0, y=4 + 16)
+p2_humidity_title = label.Label(font=terminalio.FONT, scale=1, text="Humidity (RH)", color=0xFFFFFF, x=0, y=56 - 16)
+p2_humidity = label.Label(font=terminalio.FONT, scale=2, text="{humidity}", color=0xFFFFFF, x=0, y=56)
+
+p2_left_labels = [p2_temp_title, p2_temperature, p2_humidity_title, p2_humidity]
+
+p2_right_labels = []
+
+for lbl in p2_right_labels:
+    lbl.x = DISPLAY_WIDTH - lbl.bounding_box[2]
+
+for lbl in p2_left_labels + p2_right_labels:
+    page2.append(lbl)
+
+# Page 3
+p3_tvoc_title = label.Label(font=terminalio.FONT, scale=1, text="TVOC (ppb) []", color=0xFFFFFF, x=0, y=4)
+p3_tvoc_ppm = label.Label(font=terminalio.FONT, scale=2, text="{TVOC}", color=0xFFFFFF, x=0, y=4 + 16)
+p3_eCO2_title = label.Label(font=terminalio.FONT, scale=1, text="eCO2 (ppm) []", color=0xFFFFFF, x=0, y=56 - 16)
+p3_eCO2 = label.Label(font=terminalio.FONT, scale=2, text="{eCO2}", color=0xFFFFFF, x=0, y=56)
+
+p3_left_labels = [p3_tvoc_title, p3_tvoc_ppm, p3_eCO2_title, p3_eCO2]
+
+p3_right_labels = []
+
+for lbl in p3_right_labels:
+    lbl.x = DISPLAY_WIDTH - lbl.bounding_box[2]
+
+for lbl in p3_left_labels + p3_right_labels:
+    page3.append(lbl)
+
+# Stats Page
+stats_title = label.Label(font=terminalio.FONT, text="Raspberry Pi Pico 2 W", color=0xFFFFFF, x=0, y=4)
+stats_cpu_temp = label.Label(font=terminalio.FONT, text="{cpu_temp}", color=0xFFFFFF, x=0, y=14)
+stats_cpu_freq = label.Label(font=terminalio.FONT, text="{cpu_freq}", color=0xFFFFFF, x=0, y=24)
+# stats_cpu_voltage = label.Label(font=terminalio.FONT, text="{cpu_voltage}", color=0xFFFFFF, x=0, y=34) # not available on Pico 2 W
+stats_usb = label.Label(font=terminalio.FONT, text="{usb_connected}", color=0xFFFFFF, x=0, y=34)
+stats_serial = label.Label(font=terminalio.FONT, text="{serial_connected}", color=0xFFFFFF, x=0, y=44)
+
+stats_left_labels = [stats_title, stats_cpu_temp, stats_cpu_freq, stats_usb, stats_serial]
+
+stats_right_labels = []
+
+for lbl in stats_right_labels:
+    lbl.x = DISPLAY_WIDTH - lbl.bounding_box[2]
+
+for lbl in stats_left_labels + stats_right_labels:
+    statsPage.append(lbl)
+
+time.sleep(1.5)
+
+# MAIN LOOP
 while True:
     # Update sensor readings
     HTU31D_temperature, HTU31D_humidity = HTU31D.measurements
@@ -159,48 +218,63 @@ while True:
     SGP30_H2 = SGP30.H2
     SGP30_ethanol = SGP30.Ethanol
 
-    print("temp", HTU31D.temperature)
-    print("humidity", HTU31D.relative_humidity)
-    print("pressure", BMP388.pressure)
-    print("---")
-    print("lux", TSL2591.lux)
-    print("infra", TSL2591.infrared)
-    print("visible", TSL2591.visible)
-    print("full", TSL2591.full_spectrum)
-    print("---")
-    print("tvoc", SGP30.TVOC)
-    print("eco2", SGP30.eCO2)
-    print("h2", SGP30.H2)
-    print("eth", SGP30.Ethanol)
-    print("----------------")
-
-    """
-        Page 1
-    """
-    # Update page 1
-    p1_temperature_label.text = f"T: {HTU31D_temperature:.1f}C"
-    p1_humidity_label.text = f"H: {HTU31D_humidity:.1f}%"
-    p1_lux_label.text = f"Lt: {TSL2591_lux:.0f}lux"
-    p1_tvoc_ppm_label.text = f"TVOC: {get_tvoc_text(SGP30_TVOC / 1000)}"
-    p1_eCO2_label.text = f"eCO2: {get_eCO2_text(SGP30_eCO2)}"
-
-    p1_pressure_label.text = f"P: {BMP388_pressure / 10:.1f}kPa"
-
-    for l in p1_right_labels:
-        l.x = DISPLAY_WIDTH - l.bounding_box[2]
-
-    """
-        Page 2
-    """
-    p2_temperature1_label.text = f"T1: {HTU31D_temperature:.1f}C"
-    p2_temperature2_label.text = f"T2: {BMP388_temperature:.1f}C"
-    p2_humidity_label.text = f"H: {HTU31D_humidity:.1f}%"
-
     if not button.value:
-        led.value = True
-        current_page = current_page + 1 if current_page < 2 else 0
+        onboardLed.value = True
+        current_page = current_page + 1 if current_page < 3 else 0
         display.root_group = pages[current_page]
     else:
-        led.value = False
+        onboardLed.value = False
+
+    # Update page 1
+    if current_page == 0:
+        p1_temperature.text = f"T: {HTU31D_temperature:.1f}C"
+        p1_humidity.text = f"H: {HTU31D_humidity:.1f}%"
+        p1_pressure_label.text = f"P: {BMP388_pressure / 10:.1f}kPa"
+        p1_TVOC_ppm.text = f"TVOC: {SGP30_TVOC / 1000}{(' (' + get_tvoc_rank(SGP30_TVOC) + ')') if SGP30_TVOC >= 219 else ''}"
+        p1_eCO2.text = f"eCO2: {'low' if SGP30_eCO2 == 400 else str(SGP30_eCO2) + ((' (' + get_eCO2_rank(SGP30_eCO2) + ')') if SGP30_eCO2 >= 799 else '')}"
+
+        p1_temperature_rank.text = f"{get_temperature_rank(HTU31D_temperature)}"
+        p1_humidity_rank.text = f"{get_humidity_rank(HTU31D_humidity)}"
+        p1_lux.text = f"{TSL2591_lux:.0f}lux"
+        p1_tvoc_rank.text = f"{get_tvoc_rank(SGP30_TVOC)}"
+        p1_eCO2_rank.text = f"{get_eCO2_rank(SGP30_eCO2)}"
+
+        for lbl in p1_left_labels + p1_right_labels:
+            if lbl.text == "norm" or lbl.text == "low":
+                lbl.text = ""
+
+        for lbl in p1_right_labels:
+            lbl.x = DISPLAY_WIDTH - lbl.bounding_box[2]
+
+    # Update page 2
+    elif current_page == 1:
+        p2_temperature.text = f"{HTU31D_temperature:.1f} C"
+        p2_humidity.text = f"{HTU31D_humidity:.1f} %"
+        p2_temp_title.text = f"Temp (C) [{get_temperature_rank(HTU31D_temperature)}]"
+        p2_humidity_title.text = f"Humidity (RH) [{get_humidity_rank(HTU31D_humidity)}]"
+
+        for lbl in p2_right_labels:
+            lbl.x = DISPLAY_WIDTH - lbl.bounding_box[2]
+
+    # Update page 3
+    elif current_page == 2:
+        p3_tvoc_ppm.text = str(SGP30_TVOC)
+        p3_eCO2.text = "low" if SGP30_eCO2 == 400 else str(SGP30_eCO2)
+        p3_tvoc_title.text = f"TVOC (ppb) [{get_tvoc_rank(SGP30_TVOC)}]"
+        p3_eCO2_title.text = f"eCO2 (ppm) [{get_eCO2_rank(SGP30_eCO2)}]"
+
+        for lbl in p3_right_labels:
+            lbl.x = DISPLAY_WIDTH - lbl.bounding_box[2]
+
+    # Update stats page
+    elif current_page == 3:
+        stats_cpu_temp.text = f"CPU Temp: {microcontroller.cpu.temperature:.2f}C"
+        stats_cpu_freq.text = f"CPU Freq: {microcontroller.cpu.frequency / 1_000_000:.2f}MHz"
+        # stats_cpu_voltage.text = f"CPU Volt: {microcontroller.cpu.voltage:.2f}V" # not available on Pico 2 W
+        stats_usb.text = f"usb?: {supervisor.runtime.usb_connected}"
+        stats_serial.text = f"serial?: {supervisor.runtime.serial_connected}"
+
+        for lbl in stats_right_labels:
+            lbl.x = DISPLAY_WIDTH - lbl.bounding_box[2]
 
     time.sleep(1)
