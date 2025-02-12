@@ -10,6 +10,7 @@ import busio
 import digitalio
 import displayio
 import microcontroller
+import neopixel
 import supervisor
 import terminalio
 from adafruit_display_text import label
@@ -26,6 +27,13 @@ onboardLed.direction = digitalio.Direction.OUTPUT
 button = digitalio.DigitalInOut(board.GP17)
 button.direction = digitalio.Direction.INPUT
 button.pull = digitalio.Pull.UP
+
+# Neopixels are extremely bright, so we'll dim them (over 50% is hard to look at)
+pixels = neopixel.NeoPixel(board.GP28, 24, brightness=0.03, auto_write=False, pixel_order=neopixel.GRBW)
+pixels.fill((0, 0, 0, 0))
+pixels.show()
+pixels.fill((255, 0, 0, 127))
+pixels.show()
 
 # Sensors
 TSL2591 = adafruit_tsl2591.TSL2591(I2C0, address=0x29)
