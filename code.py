@@ -1,3 +1,4 @@
+import math
 import time
 
 import adafruit_bmp3xx
@@ -210,22 +211,16 @@ for lbl in stats_left_labels + stats_right_labels:
 
 time.sleep(1.5)
 
-# MAIN LOOP
-while True:
-    # Update sensor readings
-    HTU31D_temperature, HTU31D_humidity = HTU31D.measurements
-    BMP388_pressure = BMP388.pressure
-    BMP388_temperature = BMP388.temperature
-    BMP388_altitude = BMP388.altitude
-    TSL2591_lux = TSL2591.lux
-    TSL2591_full = TSL2591.full_spectrum
-    TSL2591_visible = TSL2591.visible
-    TSL2591_ir = TSL2591.infrared
-    SGP30_TVOC = SGP30.TVOC
-    SGP30_eCO2 = SGP30.eCO2
-    SGP30_H2 = SGP30.H2
-    SGP30_ethanol = SGP30.Ethanol
+# Breathing parameters
+angle = 0
+angle_increment = 5  # degrees per iteration
+breathing_update_interval = 0.05  # seconds
 
+sensor_update_interval = 2.0  # seconds
+last_sensor_update = time.monotonic()
+
+# Main loop
+while True:
     if not button.value:
         onboardLed.value = True
         current_page = current_page + 1 if current_page < 3 else 0
@@ -233,56 +228,80 @@ while True:
     else:
         onboardLed.value = False
 
-    # Update page 1
-    if current_page == 0:
-        p1_temperature.text = f"T: {HTU31D_temperature:.1f}C"
-        p1_humidity.text = f"H: {HTU31D_humidity:.1f}%"
-        p1_pressure_label.text = f"P: {BMP388_pressure / 10:.1f}kPa"
-        p1_TVOC_ppm.text = f"TVOC: {SGP30_TVOC / 1000}{(' (' + get_tvoc_rank(SGP30_TVOC) + ')') if SGP30_TVOC >= 219 else ''}"
-        p1_eCO2.text = f"eCO2: {'low' if SGP30_eCO2 == 400 else str(SGP30_eCO2) + ((' (' + get_eCO2_rank(SGP30_eCO2) + ')') if SGP30_eCO2 >= 799 else '')}"
+    # Check if it's time to update sensor readings (once per second)
+    current_time = time.monotonic()
+    if current_time - last_sensor_update >= sensor_update_interval:
+        # Update page 1
+        if current_page == 0:
+            HTU31D_temperature = HTU31D.temperature
+            HTU31D_humidity = HTU31D.relative_humidity
+            SGP30_TVOC = SGP30.TVOC
+            SGP30_eCO2 = SGP30.eCO2
 
-        p1_temperature_rank.text = f"{get_temperature_rank(HTU31D_temperature)}"
-        p1_humidity_rank.text = f"{get_humidity_rank(HTU31D_humidity)}"
-        p1_lux.text = f"{TSL2591_lux:.0f}lux"
-        p1_tvoc_rank.text = f"{get_tvoc_rank(SGP30_TVOC)}"
-        p1_eCO2_rank.text = f"{get_eCO2_rank(SGP30_eCO2)}"
+            p1_temperature.text = f"T: {HTU31D_temperature:.1f}C"
+            p1_humidity.text = f"H: {HTU31D_humidity:.1f}%"
+            p1_pressure_label.text = f"P: {BMP388.pressure / 10:.1f}kPa"
+            p1_TVOC_ppm.text = f"TVOC: {SGP30_TVOC / 1000}{(' (' + get_tvoc_rank(SGP30_TVOC) + ')') if SGP30_TVOC >= 219 else ''}"
+            p1_eCO2.text = f"eCO2: {'low' if SGP30_eCO2 == 400 else str(SGP30_eCO2) + ((' (' + get_eCO2_rank(SGP30_eCO2) + ')') if SGP30_eCO2 >= 799 else '')}"
 
-        for lbl in p1_left_labels + p1_right_labels:
-            if lbl.text == "norm" or lbl.text == "low":
-                lbl.text = ""
+            p1_temperature_rank.text = f"{get_temperature_rank(HTU31D_temperature)}"
+            p1_humidity_rank.text = f"{get_humidity_rank(HTU31D_humidity)}"
+            p1_lux.text = f"{TSL2591.lux:.0f}lux"
+            p1_tvoc_rank.text = f"{get_tvoc_rank(SGP30_TVOC)}"
+            p1_eCO2_rank.text = f"{get_eCO2_rank(SGP30_eCO2)}"
 
-        for lbl in p1_right_labels:
-            lbl.x = DISPLAY_WIDTH - lbl.bounding_box[2]
+            for lbl in p1_left_labels + p1_right_labels:
+                if lbl.text == "norm" or lbl.text == "low":
+                    lbl.text = ""
 
-    # Update page 2
-    elif current_page == 1:
-        p2_temperature.text = f"{HTU31D_temperature:.1f} C"
-        p2_humidity.text = f"{HTU31D_humidity:.1f} %"
-        p2_temp_title.text = f"Temp (C) [{get_temperature_rank(HTU31D_temperature)}]"
-        p2_humidity_title.text = f"Humidity (RH) [{get_humidity_rank(HTU31D_humidity)}]"
+            for lbl in p1_right_labels:
+                lbl.x = DISPLAY_WIDTH - lbl.bounding_box[2]
 
-        for lbl in p2_right_labels:
-            lbl.x = DISPLAY_WIDTH - lbl.bounding_box[2]
+        # Update page 2
+        elif current_page == 1:
+            HTU31D_temperature = HTU31D.temperature
+            HTU31D_humidity = HTU31D.relative_humidity
 
-    # Update page 3
-    elif current_page == 2:
-        p3_tvoc_ppm.text = str(SGP30_TVOC)
-        p3_eCO2.text = "low" if SGP30_eCO2 == 400 else str(SGP30_eCO2)
-        p3_tvoc_title.text = f"TVOC (ppb) [{get_tvoc_rank(SGP30_TVOC)}]"
-        p3_eCO2_title.text = f"eCO2 (ppm) [{get_eCO2_rank(SGP30_eCO2)}]"
+            p2_temperature.text = f"{HTU31D_temperature:.1f} C"
+            p2_humidity.text = f"{HTU31D_humidity:.1f} %"
+            p2_temp_title.text = f"Temp (C) [{get_temperature_rank(HTU31D_temperature)}]"
+            p2_humidity_title.text = f"Humidity (RH) [{get_humidity_rank(HTU31D_humidity)}]"
 
-        for lbl in p3_right_labels:
-            lbl.x = DISPLAY_WIDTH - lbl.bounding_box[2]
+            for lbl in p2_right_labels:
+                lbl.x = DISPLAY_WIDTH - lbl.bounding_box[2]
 
-    # Update stats page
-    elif current_page == 3:
-        stats_cpu_temp.text = f"CPU Temp: {microcontroller.cpu.temperature:.2f}C"
-        stats_cpu_freq.text = f"CPU Freq: {microcontroller.cpu.frequency / 1_000_000:.2f}MHz"
-        # stats_cpu_voltage.text = f"CPU Volt: {microcontroller.cpu.voltage:.2f}V" # not available on Pico 2 W
-        stats_usb.text = f"usb?: {supervisor.runtime.usb_connected}"
-        stats_serial.text = f"serial?: {supervisor.runtime.serial_connected}"
+        # Update page 3
+        elif current_page == 2:
+            SGP30_TVOC = SGP30.TVOC
+            SGP30_eCO2 = SGP30.eCO2
 
-        for lbl in stats_right_labels:
-            lbl.x = DISPLAY_WIDTH - lbl.bounding_box[2]
+            p3_tvoc_ppm.text = str(SGP30_TVOC)
+            p3_eCO2.text = "low" if SGP30_eCO2 == 400 else str(SGP30_eCO2)
+            p3_tvoc_title.text = f"TVOC (ppb) [{get_tvoc_rank(SGP30_TVOC)}]"
+            p3_eCO2_title.text = f"eCO2 (ppm) [{get_eCO2_rank(SGP30_eCO2)}]"
 
-    time.sleep(1)
+            for lbl in p3_right_labels:
+                lbl.x = DISPLAY_WIDTH - lbl.bounding_box[2]
+
+        # Update stats page
+        elif current_page == 3:
+            stats_cpu_temp.text = f"CPU Temp: {microcontroller.cpu.temperature:.2f}C"
+            stats_cpu_freq.text = f"CPU Freq: {microcontroller.cpu.frequency / 1_000_000:.2f}MHz"
+            # stats_cpu_voltage.text = f"CPU Volt: {microcontroller.cpu.voltage:.2f}V" # not available on Pico 2 W
+            stats_usb.text = f"usb?: {supervisor.runtime.usb_connected}"
+            stats_serial.text = f"serial?: {supervisor.runtime.serial_connected}"
+
+            for lbl in stats_right_labels:
+                lbl.x = DISPLAY_WIDTH - lbl.bounding_box[2]
+
+        last_sensor_update = current_time
+
+    # Compute brightness factor from 0.0 to 1.0 using a sine wave.
+    factor = (math.sin(math.radians(angle)) + 1) / 2
+    print(factor)
+    pixels.brightness = factor
+    pixels.fill((0, 0, 0, 127))
+    pixels.show()
+    angle = (angle + angle_increment) % 360
+
+    time.sleep(0.1)
