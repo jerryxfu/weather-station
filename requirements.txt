@@ -6,3 +6,4 @@ adafruit-circuitpython-bmp3xx
 adafruit-circuitpython-displayio-ssd1306
 adafruit-circuitpython-display-text
 adafruit-circuitpython-neopixel
+adafruit-circuitpython-led-animation
