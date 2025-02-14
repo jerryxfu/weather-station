@@ -3,6 +3,7 @@ import time
 import adafruit_bmp3xx
 import adafruit_displayio_ssd1306
 import adafruit_htu31d
+import adafruit_led_animation
 import adafruit_sgp30
 import adafruit_tsl2591
 import board
@@ -15,7 +16,7 @@ import supervisor
 import terminalio
 from adafruit_display_text import label
 from adafruit_led_animation.animation.comet import Comet
-from adafruit_led_animation.animation.pulse import Pulse
+from adafruit_led_animation.animation.sparklepulse import SparklePulse
 
 displayio.release_displays()
 
@@ -30,8 +31,18 @@ button = digitalio.DigitalInOut(board.GP17)
 button.direction = digitalio.Direction.INPUT
 button.pull = digitalio.Pull.UP
 
+
+def animate_once(animation):
+    start = animation.cycle_count
+    while not animation.cycle_count > start:
+        animation.animate()
+
+
+night_mode = False
 # Neopixels are extremely bright, so we'll dim them (over 50% is hard to look at)
-pixels = neopixel.NeoPixel(board.GP28, 24, brightness=0.03, auto_write=False, pixel_order=neopixel.GRBW)
+neopixel_max_brightness = 0.15
+neopixel_night_brightness = 0.01
+pixels = neopixel.NeoPixel(board.GP28, 24, brightness=neopixel_max_brightness, auto_write=False, pixel_order=neopixel.GRBW)
 pixels.fill((0, 0, 0, 0))
 pixels.show()
 
@@ -46,6 +57,34 @@ DISPLAY_WIDTH = 128
 DISPLAY_HEIGHT = 64
 display_bus = displayio.I2CDisplay(I2C1, device_address=0x3D)
 display = adafruit_displayio_ssd1306.SSD1306(display_bus, rotation=0, width=DISPLAY_WIDTH, height=DISPLAY_HEIGHT)
+
+display.root_group = displayio.Group()
+display.root_group.append(label.Label(font=terminalio.FONT, text="Hello!", scale=2, color=0xFFFFFF, x=4, y=display.height // 2))
+display.root_group.append(label.Label(font=terminalio.FONT, text="Starting...", scale=1, color=0xFFFFFF, x=4, y=8))
+
+# led animations
+# sensor_update_pulse = Pulse(pixels, speed=1 / 255, color=(230, 143, 172, 0), period=0.5, max_intensity=0.11)
+comet = Comet(pixels, speed=0.016, color=(0, 255, 0, 0), tail_length=16, ring=False, bounce=False)
+sparkle_pulse = SparklePulse(pixels, speed=1 / 255, color=adafruit_led_animation.color.PINK, period=10, max_intensity=neopixel_max_brightness)
+
+animate_once(comet)
+comet.color = (255, 0, 0, 0)
+animate_once(comet)
+comet.color = (0, 0, 255, 0)
+animate_once(comet)
+comet.color = (0, 0, 0, 255)
+animate_once(comet)
+
+comet.ring = True
+comet.speed = 0.05
+
+
+def convert_range(old_value, old_min, old_max, new_min, new_max):
+    old_range = old_max - old_min
+    new_range = new_max - new_min
+    new_value = (((old_value - old_min) * new_range) / old_range) + new_min
+    return new_value
+
 
 # Pages
 page1 = displayio.Group()
@@ -96,7 +135,7 @@ def get_tvoc_rank(tvoc_val):
 
 
 temperature_ranks = {
-    30: "hot",
+    38: "hot",
     25: "warm",
     22: "norm",
     20: "cool",
@@ -208,36 +247,14 @@ for lbl in stats_right_labels:
 for lbl in stats_left_labels + stats_right_labels:
     statsPage.append(lbl)
 
-# led animations
-pulse = Pulse(pixels, speed=1 / 255, color=(255, 255, 255, 0), period=2)
-comet = Comet(pixels, speed=0.025, color=(0, 255, 0, 0), tail_length=12, ring=True, bounce=False)
-
-
-def run_once(animation):
-    start = animation.cycle_count
-    while not animation.cycle_count > start:
-        animation.animate()
-
-
-comet.ring = False
-run_once(comet)
-comet.color = (255, 0, 0, 0)
-run_once(comet)
-comet.color = (0, 0, 255, 0)
-run_once(comet)
-comet.color = (0, 0, 0, 255)
-run_once(comet)
-
-comet.ring = True
-comet.speed = 0.05
-
-time.sleep(0.5)
-
-sensor_update_interval = 1  # seconds
-button_update_interval = 0.5  # seconds
-time_now = time.monotonic()
-last_sensor_update = time_now
-last_button_update = time_now
+temperature_colors = {
+    38: (255, 0, 0, 0),
+    25: (255, 127, 0, 0),
+    22: (0, 255, 127, 0),
+    20: (0, 127, 255, 0),
+    19: (0, 0, 255, 0),
+    0: (255, 0, 255, 0)
+}
 
 
 def update_sensor_display(_page):
@@ -266,6 +283,14 @@ def update_sensor_display(_page):
 
         for _lbl in p1_right_labels:
             _lbl.x = DISPLAY_WIDTH - _lbl.bounding_box[2]
+
+        if not night_mode:
+            for threshold, color in sorted(temperature_colors.items(), reverse=True):
+                if HTU31D_temperature >= threshold:
+                    for i in range(12, 12 + round(convert_range(HTU31D_temperature, 16, 20, 0, 11))):
+                        pixels[i] = color
+                    pixels.brightness = neopixel_night_brightness
+                    pixels.show()
 
     # Update page 2
     elif _page == 1:
@@ -307,20 +332,58 @@ def update_sensor_display(_page):
 
 update_sensor_display(0)
 
+time_now = time.monotonic()
+prev_button_state = button.value
+button_press_time = None
+
+sensor_update_interval = 3  # seconds
+sparkle_pulse.period = sensor_update_interval
+prev_sensor_update = time_now
+
 # Main loop
 while True:
     current_time = time.monotonic()
+    current_button_state = button.value
 
-    if current_time - button_update_interval >= last_button_update:
-        if not button.value:
-            onboardLed.value = True
-            current_page = current_page + 1 if current_page < 3 else 0
-            display.root_group = pages[current_page]
+    if prev_button_state and not current_button_state:
+        # Button was pressed
+        button_press_time = current_time
+        onboardLed.value = True
+        comet.ring = False
+        animate_once(comet)
+        comet.ring = True
+        current_page = current_page + 1 if current_page < 3 else 0
+        display.root_group = pages[current_page]
+    elif not prev_button_state and current_button_state:
+        # Button was released
+        onboardLed.value = False
+        button_press_time = None
+
+    prev_button_state = current_button_state
+
+    # Check to update sensors
+    if current_time - prev_sensor_update >= sensor_update_interval:
+        # if TSL2591.lux < 5 and not night_mode:
+        #     night_mode = True
+        #     sensor_update_interval = 10
+        #     p1_subtitle.text = "Night | <3"
+        #     p1_subtitle.x = DISPLAY_WIDTH - p1_subtitle.bounding_box[2]
+        # else:
+        #     night_mode = False
+        #     sensor_update_interval = 3
+        #     p1_subtitle.text = "<3"
+        #     p1_subtitle.x = DISPLAY_WIDTH - p1_subtitle.bounding_box[2]
+
+        if night_mode:
+            update_sensor_display(current_page)
         else:
-            onboardLed.value = False
-        last_button_update = current_time
+            # pixels.brightness = 0.015
+            # pixels.fill((255, 92, 119, 0))
+            # pixels.show()
+            # animate_once(sensor_update_pulse)
+            update_sensor_display(current_page)
 
-    # Check if it's time to update sensor readings (once per second)
-    if current_time - last_sensor_update >= sensor_update_interval:
-        update_sensor_display(current_page)
-        last_sensor_update = current_time
+            # pixels.brightness = neopixel_max_brightness
+            # pixels.fill((0, 0, 0, 0))
+            # pixels.show()
+        prev_sensor_update = current_time
