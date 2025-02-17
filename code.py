@@ -40,7 +40,7 @@ def animate_once(animation):
 
 night_mode = False
 # Neopixels are extremely bright, so we'll dim them (over 50% is hard to look at)
-neopixel_max_brightness = 0.04
+neopixel_max_brightness = 0.1
 neopixel_night_brightness = 0.02
 pixels = neopixel.NeoPixel(board.GP17, 24, brightness=neopixel_max_brightness, auto_write=False, pixel_order=neopixel.GRBW)
 pixels.fill((0, 0, 0, 0))
@@ -65,7 +65,7 @@ display.root_group.append(label.Label(font=terminalio.FONT, text="Starting...", 
 # led animations
 pulse = Pulse(pixels, speed=1 / 255, color=(255, 255, 255, 255), period=1, max_intensity=1)
 comet = Comet(pixels, speed=0.02, color=(64, 64, 64, 255), tail_length=18, ring=False, bounce=False)
-sparkle_pulse = SparklePulse(pixels, speed=1 / 512, color=(255, 0, 255, 32), period=3, max_intensity=1)
+sparkle_pulse = SparklePulse(pixels, speed=1 / 512, color=(255, 0, 255, 64), period=3, max_intensity=1)
 
 animate_once(sparkle_pulse)
 pixels.fill((0, 0, 0, 0))
@@ -294,7 +294,7 @@ def value_to_color(value, min_range=0, max_range=100, color_stops=None):
 
 
 def update_temperature_bar(_temperature):
-    for i in range(12, 12 + round(convert_range(_temperature, 19, 30, 0, 12))):
+    for i in range(12, 12 + round(convert_range(_temperature, 18, 30, 0, 12))):
         pixels[i] = value_to_color(_temperature, 0, 32, color_stops={
             0.00: (0, 0, 255, 0),  # Blue
             0.56: (75, 97, 209, 0),  # Savoy blue
@@ -327,8 +327,8 @@ def update_sensor_display(_page):
         p1_temperature.text = f"T: {HTU31D_temperature:.1f}C"
         p1_humidity.text = f"H: {HTU31D_humidity:.1f}%"
         p1_pressure_label.text = f"P: {BMP388.pressure / 10:.1f}kPa"
-        p1_TVOC_ppm.text = f"TVOC: {SGP30_TVOC / 1000}{(' (' + get_tvoc_rank(SGP30_TVOC) + ')') if SGP30_TVOC >= 219 else ''}"
-        p1_eCO2.text = f"eCO2: {'low' if SGP30_eCO2 == 400 else str(SGP30_eCO2) + ((' (' + get_eCO2_rank(SGP30_eCO2) + ')') if SGP30_eCO2 >= 799 else '')}"
+        p1_TVOC_ppm.text = f"TVOC: {SGP30_TVOC / 1000}ppm"
+        p1_eCO2.text = f"eCO2: {'low' if SGP30_eCO2 == 400 else str(SGP30_eCO2) + 'ppm'}"
 
         p1_temperature_rank.text = f"{get_temperature_rank(HTU31D_temperature)}"
         p1_humidity_rank.text = f"{get_humidity_rank(HTU31D_humidity)}"
@@ -349,6 +349,7 @@ def update_sensor_display(_page):
         pixels.fill((0, 0, 0, 0))
         update_temperature_bar(HTU31D_temperature)
         update_humidity_bar(HTU31D_humidity)
+        pixels.brightness = neopixel_max_brightness
         pixels.show()
 
     # Update page 2
@@ -370,6 +371,7 @@ def update_sensor_display(_page):
         pixels.fill((0, 0, 0, 0))
         update_temperature_bar(HTU31D_temperature)
         update_humidity_bar(HTU31D_humidity)
+        pixels.brightness = neopixel_max_brightness
         pixels.show()
 
     # Update page 3
@@ -431,7 +433,7 @@ while True:
 
     # Check to update sensors
     if current_time - prev_sensor_update >= update_interval:
-        if TSL2591.lux <= 1 and not night_mode:
+        if TSL2591.lux <= 2 and not night_mode:
             night_mode = True
             update_interval = sensor_update_interval_night
             p1_subtitle.text = "Night | <3"
@@ -443,9 +445,7 @@ while True:
             p1_subtitle.x = DISPLAY_WIDTH - p1_subtitle.bounding_box[2]
 
         if night_mode:
-            pixels.brightness = neopixel_night_brightness
             update_sensor_display(current_page)
         else:
-            pixels.brightness = neopixel_max_brightness
             update_sensor_display(current_page)
         prev_sensor_update = current_time
