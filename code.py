@@ -3,7 +3,6 @@ import time
 import adafruit_bmp3xx
 import adafruit_displayio_ssd1306
 import adafruit_htu31d
-import adafruit_led_animation
 import adafruit_sgp30
 import adafruit_tsl2591
 import board
@@ -16,18 +15,19 @@ import supervisor
 import terminalio
 from adafruit_display_text import label
 from adafruit_led_animation.animation.comet import Comet
+from adafruit_led_animation.animation.pulse import Pulse
 from adafruit_led_animation.animation.sparklepulse import SparklePulse
 
 displayio.release_displays()
 
 I2C0 = busio.I2C(scl=board.GP5, sda=board.GP4)
-I2C1 = busio.I2C(scl=board.GP27, sda=board.GP26)
+I2C1 = busio.I2C(scl=board.GP19, sda=board.GP18)
 
 # Devices
 onboardLed = digitalio.DigitalInOut(board.LED)
 onboardLed.direction = digitalio.Direction.OUTPUT
 
-button = digitalio.DigitalInOut(board.GP17)
+button = digitalio.DigitalInOut(board.GP16)
 button.direction = digitalio.Direction.INPUT
 button.pull = digitalio.Pull.UP
 
@@ -40,9 +40,9 @@ def animate_once(animation):
 
 night_mode = False
 # Neopixels are extremely bright, so we'll dim them (over 50% is hard to look at)
-neopixel_max_brightness = 0.15
-neopixel_night_brightness = 0.01
-pixels = neopixel.NeoPixel(board.GP28, 24, brightness=neopixel_max_brightness, auto_write=False, pixel_order=neopixel.GRBW)
+neopixel_max_brightness = 0.04
+neopixel_night_brightness = 0.02
+pixels = neopixel.NeoPixel(board.GP17, 24, brightness=neopixel_max_brightness, auto_write=False, pixel_order=neopixel.GRBW)
 pixels.fill((0, 0, 0, 0))
 pixels.show()
 
@@ -63,27 +63,20 @@ display.root_group.append(label.Label(font=terminalio.FONT, text="Hello!", scale
 display.root_group.append(label.Label(font=terminalio.FONT, text="Starting...", scale=1, color=0xFFFFFF, x=4, y=8))
 
 # led animations
-# sensor_update_pulse = Pulse(pixels, speed=1 / 255, color=(230, 143, 172, 0), period=0.5, max_intensity=0.11)
-comet = Comet(pixels, speed=0.016, color=(0, 255, 0, 0), tail_length=16, ring=False, bounce=False)
-sparkle_pulse = SparklePulse(pixels, speed=1 / 255, color=adafruit_led_animation.color.PINK, period=10, max_intensity=neopixel_max_brightness)
+pulse = Pulse(pixels, speed=1 / 255, color=(255, 255, 255, 255), period=1, max_intensity=1)
+comet = Comet(pixels, speed=0.02, color=(64, 64, 64, 255), tail_length=18, ring=False, bounce=False)
+sparkle_pulse = SparklePulse(pixels, speed=1 / 512, color=(255, 0, 255, 32), period=3, max_intensity=1)
 
-animate_once(comet)
-comet.color = (255, 0, 0, 0)
-animate_once(comet)
-comet.color = (0, 0, 255, 0)
-animate_once(comet)
-comet.color = (0, 0, 0, 255)
-animate_once(comet)
-
-comet.ring = True
-comet.speed = 0.05
+animate_once(sparkle_pulse)
+pixels.fill((0, 0, 0, 0))
+pixels.show()
 
 
 def convert_range(old_value, old_min, old_max, new_min, new_max):
     old_range = old_max - old_min
     new_range = new_max - new_min
     new_value = (((old_value - old_min) * new_range) / old_range) + new_min
-    return new_value
+    return max(min(new_value, new_max), new_min)
 
 
 # Pages
@@ -135,19 +128,20 @@ def get_tvoc_rank(tvoc_val):
 
 
 temperature_ranks = {
-    38: "hot",
-    25: "warm",
-    22: "norm",
-    20: "cool",
-    19: "cold",
-    0: "HEAT"
+    28: "hot",
+    26: "warm",
+    23: "norm",
+    22: "cool",
+    20: "cold",
+    1: "^HEAT^",
+    -60: "FREEZE"
 }
 
 
 def get_temperature_rank(temperature):
     for threshold, text in sorted(temperature_ranks.items(), reverse=True):
         if temperature <= 0:
-            return "freezing"
+            return "FREEZE"
         if temperature >= threshold:
             return text
     return "n/a"
@@ -247,14 +241,79 @@ for lbl in stats_right_labels:
 for lbl in stats_left_labels + stats_right_labels:
     statsPage.append(lbl)
 
-temperature_colors = {
-    38: (255, 0, 0, 0),
-    25: (255, 127, 0, 0),
-    22: (0, 255, 127, 0),
-    20: (0, 127, 255, 0),
-    19: (0, 0, 255, 0),
-    0: (255, 0, 255, 0)
-}
+
+def value_to_color(value, min_range=0, max_range=100, color_stops=None):
+    """
+    Convert a value in [min_range, max_range] to a color on a gradient defined by color_stops.
+
+    Parameters:
+        value (float): The value to convert.
+        min_range (float): The minimum value of the range.
+        max_range (float): The maximum value of the range.
+        color_stops (dict): A dictionary where keys are floats between 0 and 1
+                            and values are (R, G, B, A/W) tuples (each 0-255).
+
+    Returns:
+        tuple: (R, G, B, 0) where R, G, B are integers in [0,255].
+               The alpha/white channel is averaged between the two stops.
+               If interpolation fails, returns (255, 255, 255, 0) (full white).
+    """
+    # Default color stops if none are provided:
+    if color_stops is None:
+        color_stops = {
+            0.00: (255, 230, 204, 0),  # Pale tan
+            0.33: (204, 229, 255, 0),  # Light blue
+            0.66: (102, 178, 255, 0),  # Medium blue
+            1.00: (0, 102, 204, 0)  # Deeper blue
+        }
+
+    # Clamp value to [min_range, max_range]
+    value = max(min_range, min(max_range, value))
+
+    # Normalize value to fraction f in [0, 1]
+    f = (value - min_range) / float(max_range - min_range)
+
+    # Sort the color stops by their normalized keys
+    stops = sorted(color_stops.items())
+
+    # Interpolate between the two stops that f falls between
+    for i in range(len(stops) - 1):
+        f_lower, c_lower = stops[i]
+        f_upper, c_upper = stops[i + 1]
+
+        if f_lower <= f <= f_upper:
+            # Determine how far f is between f_lower and f_upper
+            local_f = (f - f_lower) / (f_upper - f_lower)
+            R = int(c_lower[0] + (c_upper[0] - c_lower[0]) * local_f)
+            G = int(c_lower[1] + (c_upper[1] - c_lower[1]) * local_f)
+            B = int(c_lower[2] + (c_upper[2] - c_lower[2]) * local_f)
+            return (R, G, B, (c_lower[3] + c_upper[3]) / 2)
+
+    # Fallback to full white if interpolation fails
+    return (255, 255, 255, 0)
+
+
+def update_temperature_bar(_temperature):
+    for i in range(12, 12 + round(convert_range(_temperature, 19, 30, 0, 12))):
+        pixels[i] = value_to_color(_temperature, 0, 32, color_stops={
+            0.00: (0, 0, 255, 0),  # Blue
+            0.56: (75, 97, 209, 0),  # Savoy blue
+            0.68: (0, 255, 0, 0),  # Green
+            0.75: (0, 128, 128, 0),  # Teal
+            0.84: (255, 165, 0, 0),  # Orange
+            1.00: (255, 0, 0, 0)  # Red
+        })
+
+
+def update_humidity_bar(_humidity):
+    for i in range(11, 11 - round(convert_range(_humidity, 0, 100, 0, 12)), -1):
+        pixels[i] = value_to_color(_humidity, 15, 85, color_stops={
+            0.00: (108, 84, 30, 0),  # Field drab
+            0.38: (150, 113, 23, 0),  # Sand dune
+            0.50: (0, 128, 128, 0),  # Teal
+            0.62: (0, 128, 255, 0),  # Blue
+            1.00: (128, 0, 128, 0)  # Purple
+        })
 
 
 def update_sensor_display(_page):
@@ -284,13 +343,13 @@ def update_sensor_display(_page):
         for _lbl in p1_right_labels:
             _lbl.x = DISPLAY_WIDTH - _lbl.bounding_box[2]
 
-        if not night_mode:
-            for threshold, color in sorted(temperature_colors.items(), reverse=True):
-                if HTU31D_temperature >= threshold:
-                    for i in range(12, 12 + round(convert_range(HTU31D_temperature, 16, 20, 0, 11))):
-                        pixels[i] = color
-                    pixels.brightness = neopixel_night_brightness
-                    pixels.show()
+        # if night_mode:
+        #     pass
+        # else:
+        pixels.fill((0, 0, 0, 0))
+        update_temperature_bar(HTU31D_temperature)
+        update_humidity_bar(HTU31D_humidity)
+        pixels.show()
 
     # Update page 2
     elif _page == 1:
@@ -304,6 +363,14 @@ def update_sensor_display(_page):
 
         for _lbl in p2_right_labels:
             _lbl.x = DISPLAY_WIDTH - _lbl.bounding_box[2]
+
+        # if not night_mode:
+        #     pass
+        # else:
+        pixels.fill((0, 0, 0, 0))
+        update_temperature_bar(HTU31D_temperature)
+        update_humidity_bar(HTU31D_humidity)
+        pixels.show()
 
     # Update page 3
     elif _page == 2:
@@ -336,7 +403,8 @@ time_now = time.monotonic()
 prev_button_state = button.value
 button_press_time = None
 
-sensor_update_interval = 3  # seconds
+update_interval = sensor_update_interval = 1  # seconds
+sensor_update_interval_night = 10  # seconds
 sparkle_pulse.period = sensor_update_interval
 prev_sensor_update = time_now
 
@@ -362,28 +430,22 @@ while True:
     prev_button_state = current_button_state
 
     # Check to update sensors
-    if current_time - prev_sensor_update >= sensor_update_interval:
-        # if TSL2591.lux < 5 and not night_mode:
-        #     night_mode = True
-        #     sensor_update_interval = 10
-        #     p1_subtitle.text = "Night | <3"
-        #     p1_subtitle.x = DISPLAY_WIDTH - p1_subtitle.bounding_box[2]
-        # else:
-        #     night_mode = False
-        #     sensor_update_interval = 3
-        #     p1_subtitle.text = "<3"
-        #     p1_subtitle.x = DISPLAY_WIDTH - p1_subtitle.bounding_box[2]
+    if current_time - prev_sensor_update >= update_interval:
+        if TSL2591.lux <= 1 and not night_mode:
+            night_mode = True
+            update_interval = sensor_update_interval_night
+            p1_subtitle.text = "Night | <3"
+            p1_subtitle.x = DISPLAY_WIDTH - p1_subtitle.bounding_box[2]
+        else:
+            night_mode = False
+            update_interval = sensor_update_interval
+            p1_subtitle.text = "<3"
+            p1_subtitle.x = DISPLAY_WIDTH - p1_subtitle.bounding_box[2]
 
         if night_mode:
+            pixels.brightness = neopixel_night_brightness
             update_sensor_display(current_page)
         else:
-            # pixels.brightness = 0.015
-            # pixels.fill((255, 92, 119, 0))
-            # pixels.show()
-            # animate_once(sensor_update_pulse)
+            pixels.brightness = neopixel_max_brightness
             update_sensor_display(current_page)
-
-            # pixels.brightness = neopixel_max_brightness
-            # pixels.fill((0, 0, 0, 0))
-            # pixels.show()
         prev_sensor_update = current_time
