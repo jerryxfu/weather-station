@@ -20,14 +20,14 @@ from adafruit_led_animation.animation.sparklepulse import SparklePulse
 
 displayio.release_displays()
 
-I2C0 = busio.I2C(scl=board.GP5, sda=board.GP4)
+I2C0 = busio.I2C(scl=board.GP21, sda=board.GP20)
 I2C1 = busio.I2C(scl=board.GP19, sda=board.GP18)
 
 # Devices
 onboardLed = digitalio.DigitalInOut(board.LED)
 onboardLed.direction = digitalio.Direction.OUTPUT
 
-button = digitalio.DigitalInOut(board.GP16)
+button = digitalio.DigitalInOut(board.GP11)
 button.direction = digitalio.Direction.INPUT
 button.pull = digitalio.Pull.UP
 
@@ -40,9 +40,9 @@ def animate_once(animation):
 
 night_mode = False
 # Neopixels are extremely bright, so we'll dim them (over 50% is hard to look at)
-neopixel_max_brightness = 0.1
+neopixel_max_brightness = 0.08
 neopixel_night_brightness = 0.02
-pixels = neopixel.NeoPixel(board.GP17, 24, brightness=neopixel_max_brightness, auto_write=False, pixel_order=neopixel.GRBW)
+pixels = neopixel.NeoPixel(board.GP6, 24, brightness=neopixel_max_brightness, auto_write=False, pixel_order=neopixel.GRBW)
 pixels.fill((0, 0, 0, 0))
 pixels.show()
 
@@ -83,9 +83,9 @@ def convert_range(old_value, old_min, old_max, new_min, new_max):
 page1 = displayio.Group()
 page2 = displayio.Group()
 page3 = displayio.Group()
-statsPage = displayio.Group()
+# statsPage = displayio.Group()
 current_page = 0
-pages = [page1, page2, page3, statsPage]
+pages = [page1, page2, page3]
 display.root_group = pages[current_page]  # default page
 
 eCO2_ranks = {
@@ -223,6 +223,7 @@ for lbl in p3_right_labels:
 for lbl in p3_left_labels + p3_right_labels:
     page3.append(lbl)
 
+"""
 # Stats Page
 stats_title = label.Label(font=terminalio.FONT, text="Raspberry Pi Pico 2 W", color=0xFFFFFF, x=0, y=4)
 stats_cpu_temp = label.Label(font=terminalio.FONT, text="{cpu_temp}", color=0xFFFFFF, x=0, y=14)
@@ -240,6 +241,7 @@ for lbl in stats_right_labels:
 
 for lbl in stats_left_labels + stats_right_labels:
     statsPage.append(lbl)
+"""
 
 
 def value_to_color(value, min_range=0, max_range=100, color_stops=None):
@@ -294,26 +296,71 @@ def value_to_color(value, min_range=0, max_range=100, color_stops=None):
 
 
 def update_temperature_bar(_temperature):
-    for i in range(12, 12 + round(convert_range(_temperature, 18, 30, 0, 12))):
-        pixels[i] = value_to_color(_temperature, 0, 32, color_stops={
-            0.00: (0, 0, 255, 0),  # Blue
-            0.56: (75, 97, 209, 0),  # Savoy blue
-            0.68: (0, 255, 0, 0),  # Green
-            0.75: (0, 128, 128, 0),  # Teal
-            0.84: (255, 165, 0, 0),  # Orange
-            1.00: (255, 0, 0, 0)  # Red
-        })
+    color = value_to_color(_temperature, 0, 32, color_stops={
+        0.00: (0, 0, 255, 0),  # Blue
+        0.56: (75, 97, 209, 0),  # Savoy blue
+        0.68: (0, 255, 0, 0),  # Green
+        0.75: (0, 128, 128, 0),  # Teal
+        0.84: (255, 165, 0, 0),  # Orange
+        1.00: (255, 0, 0, 0)  # Red
+    })
+
+    # dimmed_color = tuple(int(convert_range(c, 0, 255, 48, 64)) for c in color)
+
+    for i in range(12, 24):
+        pixels[i] = (0, 0, 0, 16)
+
+    for i in range(12, 12 + round(convert_range(_temperature, 18, 32, 0, 11))):
+        pixels[i] = color
 
 
 def update_humidity_bar(_humidity):
+    color = value_to_color(_humidity, 15, 85, color_stops={
+        0.00: (107, 81, 21, 0),  # Field drab
+        0.38: (148, 108, 7, 0),  # Sand dune
+        0.50: (0, 128, 128, 0),  # Teal
+        0.62: (0, 128, 255, 0),  # Blue
+        1.00: (128, 0, 128, 0)  # Purple
+    })
+    # dimmed_color = tuple(int(convert_range(c, 0, 255, 48, 64)) for c in color)
+
+    for i in range(0, 11):
+        pixels[i] = (0, 0, 0, 16)
+
     for i in range(11, 11 - round(convert_range(_humidity, 0, 100, 0, 12)), -1):
-        pixels[i] = value_to_color(_humidity, 15, 85, color_stops={
-            0.00: (108, 84, 30, 0),  # Field drab
-            0.38: (150, 113, 23, 0),  # Sand dune
-            0.50: (0, 128, 128, 0),  # Teal
-            0.62: (0, 128, 255, 0),  # Blue
-            1.00: (128, 0, 128, 0)  # Purple
-        })
+        pixels[i] = color
+
+
+def update_tvoc_bar(_tvoc):
+    color = value_to_color(_tvoc, 0, 1430, color_stops={
+        0.00: (0, 255, 0, 0),  # Green
+        0.50: (255, 165, 0, 0),  # Orange
+        1.00: (255, 0, 0, 0)  # Red
+    })
+
+    # dimmed_color = tuple(int(convert_range(c, 0, 255, 48, 64)) for c in color)
+
+    for i in range(12, 24):
+        pixels[i] = (0, 0, 0, 16)
+
+    for i in range(12, 12 + round(convert_range(_tvoc, -400, 2000, 0, 11))):
+        pixels[i] = color
+
+
+def update_eco2_bar(_eco2):
+    color = value_to_color(_eco2, 400, 1400, color_stops={
+        0.00: (0, 255, 0, 0),  # Green
+        0.50: (255, 165, 0, 0),  # Orange
+        1.00: (255, 0, 0, 0)  # Red
+    })
+
+    # dimmed_color = tuple(int(convert_range(c, 0, 255, 48, 64)) for c in color)
+
+    for i in range(0, 11):
+        pixels[i] = (0, 0, 0, 16)
+
+    for i in range(11, 11 - round(convert_range(_eco2, -400, 4000, 0, 12)), -1):
+        pixels[i] = color
 
 
 def update_sensor_display(_page):
@@ -343,13 +390,14 @@ def update_sensor_display(_page):
         for _lbl in p1_right_labels:
             _lbl.x = DISPLAY_WIDTH - _lbl.bounding_box[2]
 
-        # if night_mode:
-        #     pass
-        # else:
+        if night_mode:
+            pixels.brightness = neopixel_night_brightness
+        else:
+            pixels.brightness = neopixel_max_brightness
+
         pixels.fill((0, 0, 0, 0))
         update_temperature_bar(HTU31D_temperature)
         update_humidity_bar(HTU31D_humidity)
-        pixels.brightness = neopixel_max_brightness
         pixels.show()
 
     # Update page 2
@@ -365,13 +413,14 @@ def update_sensor_display(_page):
         for _lbl in p2_right_labels:
             _lbl.x = DISPLAY_WIDTH - _lbl.bounding_box[2]
 
-        # if not night_mode:
-        #     pass
-        # else:
+        if night_mode:
+            pixels.brightness = neopixel_night_brightness
+        else:
+            pixels.brightness = neopixel_max_brightness
+
         pixels.fill((0, 0, 0, 0))
         update_temperature_bar(HTU31D_temperature)
         update_humidity_bar(HTU31D_humidity)
-        pixels.brightness = neopixel_max_brightness
         pixels.show()
 
     # Update page 3
@@ -387,6 +436,18 @@ def update_sensor_display(_page):
         for _lbl in p3_right_labels:
             _lbl.x = DISPLAY_WIDTH - _lbl.bounding_box[2]
 
+        if night_mode:
+            pixels.brightness = neopixel_night_brightness
+        else:
+            pixels.brightness = neopixel_max_brightness
+
+        pixels.fill((0, 0, 0, 0))
+        update_tvoc_bar(SGP30_TVOC)
+        update_eco2_bar(SGP30_eCO2)
+        pixels.show()
+
+
+"""
     # Update stats page
     elif _page == 3:
         stats_cpu_temp.text = f"CPU Temp: {microcontroller.cpu.temperature:.2f}C"
@@ -397,7 +458,7 @@ def update_sensor_display(_page):
 
         for _lbl in stats_right_labels:
             _lbl.x = DISPLAY_WIDTH - _lbl.bounding_box[2]
-
+"""
 
 update_sensor_display(0)
 
@@ -422,7 +483,7 @@ while True:
         comet.ring = False
         animate_once(comet)
         comet.ring = True
-        current_page = current_page + 1 if current_page < 3 else 0
+        current_page = current_page + 1 if current_page < 2 else 0
         display.root_group = pages[current_page]
     elif not prev_button_state and current_button_state:
         # Button was released
@@ -433,7 +494,7 @@ while True:
 
     # Check to update sensors
     if current_time - prev_sensor_update >= update_interval:
-        if TSL2591.lux <= 2 and not night_mode:
+        if TSL2591.lux <= 1 and not night_mode:
             night_mode = True
             update_interval = sensor_update_interval_night
             p1_subtitle.text = "Night | <3"
